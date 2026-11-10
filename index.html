@@ -275,7 +275,7 @@ function render(){
       <div class="card cold"><div class="k">KÄLTESTE STREAK</div>${coldR? `<div class="v">${FLAKE}${esc(coldR.p.name)}</div><div class="s">${coldR.n} Niederlagen in Folge</div>` : `<div class="v muted">–</div><div class="s">Noch keine Streak ab 3 Niederlagen</div>`}</div>
       <div class="card best"><div class="k">BESTE QUOTE</div>${bestR? `<div class="v">${esc(bestR.p.name)}<span style="color:var(--cy)">${bestR.quote}%</span></div><div class="s">${bestR.w} Siege · ${bestR.l} Niederlagen</div>` : `<div class="v muted">–</div><div class="s">Noch keine Spiele</div>`}</div>
     </div>`;
-    const cols = `34px 112px 38px 38px 62px 84px repeat(${dates.length}, 44px) 64px`;
+    const cols = `34px 112px 38px 38px 62px 84px ${dates.length ? 'repeat('+dates.length+', 44px) ' : ''}64px`;
     const rk = '38px';
     const head = `<div class="row head" style="--cols:${cols};--rk:${rk}"><div class="sticky1">#</div><div class="sticky2" style="padding-left:2px">Spieler</div><div class="num">S</div><div class="num">N</div><div>Quote</div><div>Streak</div>${dates.map(dt=>{const f=fmtD(dt);return isTrainer()?`<button class="dhead edit" data-act="editday" data-date="${dt}" aria-label="Trainingstag ${f.long} bearbeiten">${f.wd}<b>${f.d}</b></button>`:`<div class="dhead">${f.wd}<b>${f.d}</b></div>`}).join('')}<div class="alt" title="Startstand aus dem Notizbuch (Siege | Niederlagen)">Alt</div></div>`;
     const rowHtml = (r, i, hid) => {
