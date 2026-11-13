@@ -182,7 +182,7 @@ button.dhead.edit{border:1px dashed rgba(34,230,255,.5);color:var(--cy)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;background:#16162e;border:1px solid rgba(34,230,255,.5);color:var(--tx);padding:10px 16px;border-radius:12px;font-size:14px;font-weight:600;z-index:40;box-shadow:0 0 18px rgba(34,230,255,.25)}
 .menu .li{cursor:pointer;width:100%;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.06);color:var(--tx);text-align:left;font-size:16px;font-weight:600;height:56px}
 svg{display:block}
-@media(max-width:480px){h1{font-size:26px}}
+@media(max-width:480px){h1{font-size:22px}.crest{width:50px;height:50px}.top{gap:10px}.chipbtn{padding:0 12px;font-size:13px}}
 /* Trainings-Zähler */
 .statbar{display:flex;align-items:center;gap:14px;padding:12px 16px;margin-bottom:12px;background:var(--panel);border:1px solid rgba(34,230,255,.4);border-radius:16px;box-shadow:0 0 18px rgba(34,230,255,.12)}
 .statbar .big{font-size:38px;font-weight:800;line-height:1;color:var(--cy);text-shadow:0 0 16px rgba(34,230,255,.6);min-width:44px;text-align:center}
@@ -218,7 +218,7 @@ svg{display:block}
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import {getFirestore,doc,onSnapshot,setDoc,updateDoc,deleteField,FieldPath,collection,getDocs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {getFirestore,doc,onSnapshot,setDoc,deleteDoc,updateDoc,deleteField,FieldPath,collection,getDocs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBRAG4P8pRSGVp8t-BVapVEsrKn_e-97wM",
@@ -251,6 +251,19 @@ const parseISO = iso => { const [y,m,d] = iso.split('-').map(Number); return new
 const addDays = (iso,n) => { const dt = parseISO(iso); dt.setDate(dt.getDate()+n); return isoOf(dt); };
 const endOfMonth = iso => { const dt = parseISO(iso); return isoOf(new Date(dt.getFullYear(), dt.getMonth()+1, 0)); };
 const daysBetween = (a,b) => Math.round((parseISO(b)-parseISO(a))/86400000);
+const ROMAN = ['','I','II','III','IV'];
+function seasonLabel(id){
+  const m = String(id).match(/^(\d{4})-(\d{2})(?:-(\d))?$/);
+  if (!m) return String(id).replace('-','/');
+  return m[1]+'/'+m[2]+' · Part '+(ROMAN[+m[3]||1]||(+m[3]));
+}
+/* Nächste Tabelle nach der neuesten: Part I -> Part II -> nächste Saison Part I */
+function nextSeasonId(cur){
+  const m = String(cur).match(/^(\d{4})-(\d{2})(?:-(\d))?$/);
+  if (!m){ const y = parseInt(cur,10) || new Date().getFullYear(); return y+'-'+p2((y+1)%100); }
+  if ((+m[3]||1) === 1) return m[1]+'-'+m[2]+'-2';
+  const y = +m[1]+1; return y+'-'+p2((y+1)%100);
+}
 const shortD = iso => { const [y,m,d] = iso.split('-'); return d+'.'+m+'.'; };
 
 const FLAME = c => `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 2c.3 2.6 1.6 4 3.2 5.6C17.4 9.3 19 11.2 19 14a7 7 0 0 1-14 0c0-2.2 1-4 2.4-5.3.1 1.5.7 2.6 1.8 3.2C9.1 9 10 5 12.5 2z" fill="${c}"/></svg>`;
@@ -402,7 +415,7 @@ function tableHtml(d){
     const nWack = wack ? Object.keys(KI.akut).length + Object.keys(KI.moeglich).length : 0;
     const kcard = zoneSet.size ? `<div class="card keller"><div class="k">KELLER</div><div class="v" style="font-size:16px;line-height:1.3;align-items:flex-start">${SKULL('#ff5a68').replace('width="14" height="14"','width="18" height="18" style="flex:none;margin-top:2px"')}<span>${R.filter(r=>zoneSet.has(r.p.id)).map(r=>esc(r.p.name)).join(', ')}</span></div><div class="s">${wack ? (nWack? nWack+' zittern noch, heute wird es entschieden' : 'Heute kann sich nichts mehr ändern') : 'Hier droht die Strafe'}</div></div>` : '';
     const nTr = Object.keys(d.days).length + (d.trainBase||0), lastDt = C.dates[C.dates.length-1];
-    h += `<div class="statbar"><div class="big">${nTr}</div><div><div class="k">TRAININGS IN DIESER SAISON</div><div class="s">${lastDt ? 'Zuletzt: '+fmtD(lastDt).long : 'Noch kein Training eingetragen'}${d.trainBase? ' · davon '+d.trainBase+' vor dem Start':''}</div></div></div>`;
+    h += `<div class="statbar"><div class="big">${nTr}</div><div><div class="k">TRAININGS IN DIESER TABELLE</div><div class="s">${lastDt ? 'Zuletzt: '+fmtD(lastDt).long : 'Noch kein Training eingetragen'}${d.trainBase? ' · davon '+d.trainBase+' vor dem Start':''}</div></div></div>`;
     h += `<div class="cards${kcard?' c4':''}">
       <div class="card hot"><div class="k">HEISSESTE STREAK</div>${hotR? `<div class="v">${FLAME('#ff7a2e')}${esc(hotR.p.name)}</div><div class="s">${hotR.n} Siege in Folge</div>` : `<div class="v muted">–</div><div class="s">Noch keine Streak ab 3 Siegen</div>`}</div>
       <div class="card cold"><div class="k">KÄLTESTE STREAK</div>${coldR? `<div class="v">${FLAKE}${esc(coldR.p.name)}</div><div class="s">${coldR.n} Niederlagen in Folge</div>` : `<div class="v muted">–</div><div class="s">Noch keine Streak ab 3 Niederlagen</div>`}</div>
@@ -443,14 +456,14 @@ function render(){
   const app = document.getElementById('app');
   const d = S.data, mat = S.tab==='material';
   let h = `<div class="wrap"><div class="top"><img class="crest" src="${CREST}" alt="Wappen VfL Stenum"><div class="grow"><div class="eyebrow">VfL STENUM II</div><h1>${mat?'Materialdienst':'Tabelle'}</h1></div>`;
-  h += `<select class="chipbtn" data-act="season" aria-label="Saison">${S.seasons.map(s=>`<option value="${s}" ${s===S.seasonId?'selected':''}>${esc(s.replace('-','/'))}</option>`).join('') || `<option>${DEFAULT_SEASON.replace('-','/')}</option>`}</select>`;
+  h += `<select class="chipbtn" data-act="season" aria-label="Saison">${S.seasons.map(s=>`<option value="${s}" ${s===S.seasonId?'selected':''}>${esc(seasonLabel(s))}</option>`).join('') || `<option>${seasonLabel(DEFAULT_SEASON)}</option>`}</select>`;
   h += `</div><div class="neon"></div>`;
   h += `<div class="tabs" role="tablist"><button role="tab" class="${mat?'':'on'}" aria-selected="${!mat}" data-act="tab" data-tab="spiele">${TABLE(mat?'#a9abc6':'#22e6ff')}Abschlussspiel</button><button role="tab" class="${mat?'on':''}" aria-selected="${mat}" data-act="tab" data-tab="material">${BOX(mat?'#22e6ff':'#a9abc6',16)}Materialdienst</button></div>`;
 
   if (!S.loaded){ h += `<div class="empty">Lade …</div>`; }
   else if (S.error){ h += `<div class="empty">Die Daten konnten nicht geladen werden.<br><span class="muted">${esc(S.error)}</span></div>`; }
   else if (!d){
-    h += `<div class="empty">Für diese Saison gibt es noch keine Daten.${isTrainer()? `<br><br><button class="btn pri" style="flex:none" data-act="init">Saison ${esc(S.seasonId.replace('-','/'))} anlegen</button>` : '<br>Sobald das erste Abschlussspiel eingetragen ist, erscheint hier die Tabelle.'}</div>`;
+    h += `<div class="empty">Für diese Saison gibt es noch keine Daten.${isTrainer()? `<br><br><button class="btn pri" style="flex:none" data-act="init">${esc(seasonLabel(S.seasonId))} anlegen</button>` : '<br>Sobald das erste Abschlussspiel eingetragen ist, erscheint hier die Tabelle.'}</div>`;
   } else if (mat){ h += materialHtml(d); }
   else { h += tableHtml(d); }
   h += `</div>`;
@@ -537,8 +550,9 @@ function menuSheet(){
     <button class="li" data-act="players">Spieler verwalten<span class="muted">›</span></button>
     <button class="li" data-act="kmode">Keller-Anzeige<span class="muted">${{off:'Aus',decision:'Entscheidungstag',final:'Endstand'}[modeOf(S.data)]} ›</span></button>
     <button class="li" data-act="start">Startstand eintragen<span class="muted">›</span></button>
-    <button class="li" data-act="newseason">Neue Saison anlegen<span class="muted">›</span></button>
+    <button class="li" data-act="newseason">Nächsten Part anlegen<span class="muted">›</span></button>
     <button class="li" data-act="export">Daten sichern (Datei)<span class="muted">›</span></button>
+    ${S.seasons.length>1?`<button class="li" data-act="delseason" style="color:var(--l)">Diese Tabelle löschen<span class="muted">›</span></button>`:''}
     <button class="li" data-act="logout" style="color:var(--l)">Abmelden</button></div></div><div class="sh-f"></div>`);
 }
 
@@ -582,7 +596,7 @@ function renderStart(){
   const st = sheetState, d = S.data, t = startTotals();
   const sh = layer.querySelector('.sheet'); const top = sh.querySelector('.sh-b')?.scrollTop||0;
   const f = v => v!=='' ? ' f':'';
-  sh.innerHTML = `${shHead('EINMALIG · SAISON '+esc(S.seasonId.replace('-','/')),'Startstand eintragen')}<div class="sh-b">
+  sh.innerHTML = `${shHead('EINMALIG · '+esc(seasonLabel(S.seasonId).toUpperCase()),'Startstand eintragen')}<div class="sh-b">
   <div class="txt">Trag pro Spieler ein, wie oft er laut Notizbuch bisher gewonnen und verloren hat. Das zählt als Startstand.</div>
   <div class="field"><label for="tb">Trainings bisher laut Notizbuch (optional)</label><input class="inp" id="tb" type="number" inputmode="numeric" min="0" value="${st.base}" placeholder="0"></div>
   <div class="chips"><span class="chip c" id="tdone">${t.done} von ${t.total} ausgefüllt</span><span class="chip" id="tsum">Summe ${t.sw} S · ${t.sl} N</span></div>
@@ -621,7 +635,7 @@ function profileSheet(id){
   const pts = r.pts; let chart='';
   if (pts.length>=2){ const W=320,H=76; const xs = pts.map((v,i)=>(i/(pts.length-1))*W); const lo=Math.max(0,Math.min(...pts)-5), hi=Math.min(100,Math.max(...pts)+5); const ys = pts.map(v=>H-((v-lo)/(hi-lo||1))*H); chart = `<div class="sec">VERLAUF DER QUOTE</div><div class="panel" style="height:96px;padding:10px 12px"><svg width="100%" height="100%" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Quote über die Saison"><polyline points="${xs.map((x,i)=>x.toFixed(1)+','+ys[i].toFixed(1)).join(' ')}" fill="none" stroke="#22e6ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" style="filter:drop-shadow(0 0 5px rgba(34,230,255,.7))"/></svg></div>`; }
   const badges = `${idx>=0?`<span class="chip c">Platz ${idx+1}</span>`:`<span class="chip" style="border-style:dashed">Nicht im Ranking</span>`}${r.last==='W'&&r.n>=3?`<span class="pill ${r.n>=7?'hot3':r.n>=5?'hot2':'hot1'}">${FLAME(r.n>=7?'#4db8ff':r.n>=5?'#ff7a2e':'#ffab5c')}${r.n} Streak</span>`:''}${r.last==='L'&&r.n>=3?`<span class="pill ice">${FLAKE}${r.n} Streak</span>`:''}`;
-  openSheet('profile', `${shHead('VfL STENUM II · SAISON '+esc(S.seasonId.replace('-','/')), esc(r.p.name))}<div class="sh-b">
+  openSheet('profile', `${shHead('VfL STENUM II · '+esc(seasonLabel(S.seasonId).toUpperCase()), esc(r.p.name))}<div class="sh-b">
    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div class="chips" style="flex:1">${badges}${kChip}</div>
    <div style="position:relative;width:104px;height:104px;flex:none"><svg width="104" height="104" viewBox="0 0 104 104" aria-hidden="true"><circle cx="52" cy="52" r="44" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="8"/><circle cx="52" cy="52" r="44" fill="none" stroke="#22e6ff" stroke-width="8" stroke-linecap="round" stroke-dasharray="${dash} 277" transform="rotate(-90 52 52)" style="filter:drop-shadow(0 0 6px rgba(34,230,255,.7))"/></svg><div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center"><div style="font-size:${r.quote===null?20:24}px;font-weight:800;line-height:1">${r.quote===null?'–':q+'%'}</div><div style="font-size:10px;font-weight:600;letter-spacing:.1em;color:var(--mut);margin-top:3px">QUOTE</div></div></div></div>
    <div class="grid3"><div class="sc" style="border-color:rgba(46,242,192,.35)"><div class="k">SIEGE</div><div class="v" style="color:var(--w)">${r.w}</div></div><div class="sc" style="border-color:rgba(255,79,139,.35)"><div class="k">NIEDERL.</div><div class="v" style="color:var(--l)">${r.l}</div></div><div class="sc"><div class="k">SPIELE</div><div class="v">${r.games}</div></div></div>
@@ -634,16 +648,39 @@ function profileSheet(id){
 }
 
 function newSeasonSheet(){
-  const y = new Date().getFullYear(); const sug = new Date().getMonth()>=10 ? String(y) : (new Date().getMonth()>=6? y+'-'+String((y+1)%100).padStart(2,'0') : (y-1)+'-'+String(y%100).padStart(2,'0'));
-  openSheet('newseason', `${shHead('TRAINER','Neue Saison')}<div class="sh-b"><div class="txt"><b>Das ist der Reset:</b> Es startet eine neue, leere Saison. Der Trainings-Zähler beginnt wieder bei 0, das nächste Training ist das erste. Für den Neustart im Januar z. B. „2027“ eingeben. Die Spielerliste wird übernommen, Siege und Niederlagen starten bei null. Eingeteilte Materialdienste, die noch nicht vorbei sind, werden mitgenommen. Alte Saisons bleiben erhalten.</div><div class="field"><label for="ns">Saison</label><input class="inp" id="ns" value="${sug==String(y)? String(y+1) : next(sug)}" placeholder="2027"></div><div class="err" id="nserr"></div></div><div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn pri" data-act="donewseason">Anlegen</button></div>`);
-  function next(s){ const [a,b]=s.split('-').map(Number); return (a+1)+'-'+String((b+1)%100).padStart(2,'0'); }
+  const nid = nextSeasonId(S.seasons[0]||S.seasonId);
+  openSheet('newseason', `${shHead('TRAINER','Nächsten Part anlegen')}<div class="sh-b">
+    <div class="kbox y" style="margin-top:6px"><b>Neu: ${esc(seasonLabel(nid))}</b></div>
+    <div class="txt" style="margin-top:12px">Das ist der Neustart: eine neue, leere Tabelle. Siege, Niederlagen, Streaks und der Trainings-Zähler beginnen bei 0, das nächste Training ist das erste. Die Spielerliste wird übernommen, ebenso Materialdienste, die noch nicht vorbei sind.</div>
+    <div class="txt" style="margin-top:10px">Alle bisherigen Tabellen bleiben unverändert gespeichert. Sie lassen sich oben rechts im Auswahlmenü jederzeit ansehen. Falls du die neue Tabelle aus Versehen anlegst, kannst du sie im Menü wieder löschen.</div>
+    <div class="err" id="nserr"></div></div>
+    <div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn pri" data-act="donewseason" data-id="${nid}">${esc(seasonLabel(nid))} anlegen</button></div>`);
 }
-async function doNewSeason(){
-  const v = document.getElementById('ns').value.trim(); const err = document.getElementById('nserr');
-  if (!/^\d{4}(-\d{2})?$/.test(v)){ err.textContent='Bitte so eingeben: 2027 oder 2027-28'; return; }
-  if (S.seasons.includes(v)){ err.textContent='Diese Saison gibt es schon.'; return; }
+async function doNewSeason(v){
+  const err = document.getElementById('nserr');
+  if (S.seasons.includes(v)){ err.textContent='Diese Tabelle gibt es schon.'; return; }
   const keep = (S.data && S.data.dienste ? S.data.dienste : []).filter(e=>e.to>=todayISO());
-  try { await setDoc(doc(db,'seasons',v), {players: S.data? S.data.players : DEFAULT_PLAYERS, days:{}, alt:{}, dienste: keep}); S.seasonId=v; S.picked=true; closeSheet(); await loadSeasons(); subscribe(); toast('Saison '+v.replace('-','/')+' angelegt'); } catch(e){ err.textContent='Anlegen fehlgeschlagen.'; }
+  try { await setDoc(doc(db,'seasons',v), {players: S.data? S.data.players : DEFAULT_PLAYERS, days:{}, alt:{}, dienste: keep}); S.seasonId=v; S.picked=false; closeSheet(); await loadSeasons(); subscribe(); toast(seasonLabel(v)+' angelegt'); } catch(e){ err.textContent='Anlegen fehlgeschlagen.'; }
+}
+function delSeasonSheet(){
+  openSheet('delseason', `${shHead('TRAINER','Tabelle löschen')}<div class="sh-b">
+    <div class="kbox k" style="margin-top:6px"><b>${esc(seasonLabel(S.seasonId))}</b> wird mit allen Trainingstagen, Ergebnissen und Diensten gelöscht.</div>
+    <div class="txt" style="margin-top:12px">Vorher wird automatisch eine Sicherung (Datei) auf dieses Gerät heruntergeladen. Danach sehen alle wieder die Tabelle davor.</div>
+    <div class="field"><label for="dc">Zum Bestätigen LÖSCHEN eintippen</label><input class="inp" id="dc" autocomplete="off" autocapitalize="characters" placeholder="LÖSCHEN"></div>
+    <div class="err" id="dserr"></div></div>
+    <div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn danger" data-act="dodelseason">Endgültig löschen</button></div>`);
+}
+async function doDelSeason(){
+  const err = document.getElementById('dserr');
+  if (document.getElementById('dc').value.trim().toUpperCase() !== 'LÖSCHEN'){ err.textContent='Bitte LÖSCHEN eintippen.'; return; }
+  if (S.seasons.length < 2){ err.textContent='Die einzige Tabelle kann nicht gelöscht werden.'; return; }
+  const id = S.seasonId;
+  try {
+    exportData();
+    await deleteDoc(ref());
+    S.seasons = S.seasons.filter(x=>x!==id); S.seasonId = S.seasons[0]; S.picked = false;
+    closeSheet(); subscribe(); loadSeasons(); toast('Gelöscht. Sicherung wurde heruntergeladen.');
+  } catch(e){ err.textContent='Löschen fehlgeschlagen.'; console.error(e); }
 }
 function exportData(){
   const blob = new Blob([JSON.stringify({season:S.seasonId, exported:new Date().toISOString(), data:S.data},null,2)],{type:'application/json'});
@@ -732,7 +769,9 @@ document.addEventListener('click', async e => {
     case 'togst': { const v = sheetState.vals[t.dataset.id]; v.st = v.st===''?'W':v.st==='W'?'L':''; renderStart(); break; }
     case 'savestart': saveStart(); break;
     case 'newseason': newSeasonSheet(); break;
-    case 'donewseason': doNewSeason(); break;
+    case 'donewseason': doNewSeason(t.dataset.id); break;
+    case 'delseason': delSeasonSheet(); break;
+    case 'dodelseason': doDelSeason(); break;
     case 'export': exportData(); break;
     case 'profile': profileSheet(t.dataset.id); break;
     case 'init': try { await setDoc(ref(), {players:DEFAULT_PLAYERS, days:{}, alt:{}, dienste:[]}); loadSeasons(); } catch(e){ toast('Anlegen fehlgeschlagen'); } break;
