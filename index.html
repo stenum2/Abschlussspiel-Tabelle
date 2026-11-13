@@ -295,7 +295,7 @@ function kellerInfo(R){
 }
 
 /* ---------- state ---------- */
-const S = {seasonId: DEFAULT_SEASON, seasons: [], data: null, loaded: false, user: null, unsub: null, tab: (location.hash==='#material' ? 'material' : 'spiele')};
+const S = {seasonId: DEFAULT_SEASON, seasons: [], trash: [], data: null, loaded: false, user: null, unsub: null, tab: (location.hash==='#material' ? 'material' : 'spiele')};
 S.picked = false;
 
 function subscribe(){
@@ -308,10 +308,13 @@ function subscribe(){
   }, err => { S.loaded = true; S.error = err.message; render(); });
 }
 async function loadSeasons(){
-  try { const q = await getDocs(collection(db,'seasons')); S.seasons = q.docs.map(d => d.id).sort().reverse(); } catch(e){ S.seasons = []; }
+  let docs = [];
+  try { const q = await getDocs(collection(db,'seasons')); docs = q.docs.map(d => ({id:d.id, data:d.data()})); } catch(e){}
+  S.seasons = docs.filter(x=>!x.data.deletedAt).map(x=>x.id).sort().reverse();
+  S.trash = docs.filter(x=>x.data.deletedAt && !x.data.restoredAt).map(x=>({id:x.id, at:x.data.deletedAt, data:x.data})).sort((a,b)=>b.at.localeCompare(a.at));
   if (!S.seasons.includes(S.seasonId)) S.seasons.unshift(S.seasonId);
   S.seasons.sort().reverse();
-  /* Standard = neueste Saison, damit nach dem Reset alle automatisch die neue sehen */
+  /* Standard = neueste Saison, damit nach dem Neustart alle automatisch die neue sehen */
   if (!S.picked && S.seasons[0] !== S.seasonId){ S.seasonId = S.seasons[0]; subscribe(); return; }
   render();
 }
@@ -552,6 +555,7 @@ function menuSheet(){
     <button class="li" data-act="start">Startstand eintragen<span class="muted">›</span></button>
     <button class="li" data-act="newseason">Nächsten Part anlegen<span class="muted">›</span></button>
     <button class="li" data-act="export">Daten sichern (Datei)<span class="muted">›</span></button>
+    ${S.trash.length?`<button class="li" data-act="trash">Gelöschte Tabellen<span class="muted">${S.trash.length} ›</span></button>`:''}
     ${S.seasons.length>1?`<button class="li" data-act="delseason" style="color:var(--l)">Diese Tabelle löschen<span class="muted">›</span></button>`:''}
     <button class="li" data-act="logout" style="color:var(--l)">Abmelden</button></div></div><div class="sh-f"></div>`);
 }
@@ -660,15 +664,19 @@ async function doNewSeason(v){
   const err = document.getElementById('nserr');
   if (S.seasons.includes(v)){ err.textContent='Diese Tabelle gibt es schon.'; return; }
   const keep = (S.data && S.data.dienste ? S.data.dienste : []).filter(e=>e.to>=todayISO());
-  try { await setDoc(doc(db,'seasons',v), {players: S.data? S.data.players : DEFAULT_PLAYERS, days:{}, alt:{}, dienste: keep}); S.seasonId=v; S.picked=false; closeSheet(); await loadSeasons(); subscribe(); toast(seasonLabel(v)+' angelegt'); } catch(e){ err.textContent='Anlegen fehlgeschlagen.'; }
+  try {
+    /* Liegt dieselbe Tabelle im Papierkorb, bleibt sie als Kopie erhalten */
+    const old = S.trash.find(t=>t.id===v);
+    if (old) await setDoc(doc(db,'seasons',v+'~'+Date.now().toString(36)), old.data);
+    await setDoc(doc(db,'seasons',v), {players: S.data? S.data.players : DEFAULT_PLAYERS, days:{}, alt:{}, dienste: keep}); S.seasonId=v; S.picked=false; closeSheet(); await loadSeasons(); subscribe(); toast(seasonLabel(v)+' angelegt'); } catch(e){ err.textContent='Anlegen fehlgeschlagen.'; }
 }
 function delSeasonSheet(){
   openSheet('delseason', `${shHead('TRAINER','Tabelle löschen')}<div class="sh-b">
-    <div class="kbox k" style="margin-top:6px"><b>${esc(seasonLabel(S.seasonId))}</b> wird mit allen Trainingstagen, Ergebnissen und Diensten gelöscht.</div>
-    <div class="txt" style="margin-top:12px">Vorher wird automatisch eine Sicherung (Datei) auf dieses Gerät heruntergeladen. Danach sehen alle wieder die Tabelle davor.</div>
+    <div class="kbox k" style="margin-top:6px"><b>${esc(seasonLabel(S.seasonId))}</b> wird aus der Auswahl entfernt.</div>
+    <div class="txt" style="margin-top:12px">Die Daten bleiben gespeichert. Im Menü unter „Gelöschte Tabellen“ lässt sich die Tabelle jederzeit wiederherstellen. Danach sehen alle wieder die Tabelle davor.</div>
     <div class="field"><label for="dc">Zum Bestätigen LÖSCHEN eintippen</label><input class="inp" id="dc" autocomplete="off" autocapitalize="characters" placeholder="LÖSCHEN"></div>
     <div class="err" id="dserr"></div></div>
-    <div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn danger" data-act="dodelseason">Endgültig löschen</button></div>`);
+    <div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn danger" data-act="dodelseason">Löschen</button></div>`);
 }
 async function doDelSeason(){
   const err = document.getElementById('dserr');
@@ -676,11 +684,32 @@ async function doDelSeason(){
   if (S.seasons.length < 2){ err.textContent='Die einzige Tabelle kann nicht gelöscht werden.'; return; }
   const id = S.seasonId;
   try {
-    exportData();
-    await deleteDoc(ref());
+    await updateDoc(ref(), {deletedAt: new Date().toISOString()});
     S.seasons = S.seasons.filter(x=>x!==id); S.seasonId = S.seasons[0]; S.picked = false;
-    closeSheet(); subscribe(); loadSeasons(); toast('Gelöscht. Sicherung wurde heruntergeladen.');
+    closeSheet(); subscribe(); loadSeasons(); toast('Gelöscht. Wiederherstellen: Menü, Gelöschte Tabellen');
   } catch(e){ err.textContent='Löschen fehlgeschlagen.'; console.error(e); }
+}
+const baseId = id => String(id).split('~')[0];
+function trashSheet(msg){
+  const fd = iso => new Date(iso).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
+  openSheet('trash', `${shHead('TRAINER','Gelöschte Tabellen')}<div class="sh-b">
+    <div class="txt">Diese Tabellen sind ausgeblendet, aber noch gespeichert.</div>
+    <div class="list">${S.trash.length? S.trash.map(x=>`<div class="li"><div><div class="n">${esc(seasonLabel(baseId(x.id)))}</div><div class="r">gelöscht am ${fd(x.at)}</div></div><button class="btn" style="height:44px;padding:0 14px" data-act="restore" data-id="${esc(x.id)}">Wiederherstellen</button></div>`).join('') : '<div class="li"><span class="muted">Nichts gelöscht.</span></div>'}</div>
+    <div class="err" id="trerr">${msg?esc(msg):''}</div></div><div class="sh-f"><button class="btn" data-act="close">Schließen</button></div>`);
+}
+async function restoreSeason(id){
+  const x = S.trash.find(t=>t.id===id); if (!x) return;
+  const base = baseId(id), now = new Date().toISOString();
+  try {
+    if (id === base){ await updateDoc(doc(db,'seasons',id), {deletedAt: deleteField()}); }
+    else {
+      if (S.seasons.includes(base)){ trashSheet(seasonLabel(base)+' gibt es bereits. Bitte diese zuerst löschen.'); return; }
+      const copy = {...x.data}; delete copy.deletedAt;
+      await setDoc(doc(db,'seasons',base), copy);
+      await updateDoc(doc(db,'seasons',id), {restoredAt: now});
+    }
+    S.seasonId = base; S.picked = true; closeSheet(); await loadSeasons(); subscribe(); toast(seasonLabel(base)+' wiederhergestellt');
+  } catch(e){ trashSheet('Wiederherstellen fehlgeschlagen.'); console.error(e); }
 }
 function exportData(){
   const blob = new Blob([JSON.stringify({season:S.seasonId, exported:new Date().toISOString(), data:S.data},null,2)],{type:'application/json'});
@@ -771,6 +800,8 @@ document.addEventListener('click', async e => {
     case 'newseason': newSeasonSheet(); break;
     case 'donewseason': doNewSeason(t.dataset.id); break;
     case 'delseason': delSeasonSheet(); break;
+    case 'trash': trashSheet(); break;
+    case 'restore': restoreSeason(t.dataset.id); break;
     case 'dodelseason': doDelSeason(); break;
     case 'export': exportData(); break;
     case 'profile': profileSheet(t.dataset.id); break;
