@@ -209,6 +209,9 @@ svg{display:block}
 .pgrid{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .psel{min-height:44px;padding:0 14px;border-radius:12px;background:transparent;border:1.5px dashed rgba(255,255,255,.22);color:var(--mut);font-weight:700;font-size:15px}
 .psel.on{background:rgba(34,230,255,.14);border:1.5px solid var(--cy);color:var(--cy);box-shadow:0 0 12px rgba(34,230,255,.25)}
+.tap.tA{background:rgba(34,230,255,.14);border:1.5px solid var(--cy);color:var(--cy);box-shadow:0 0 12px rgba(34,230,255,.3)}
+.tap.tB{background:rgba(255,43,214,.14);border:1.5px solid var(--mg);color:var(--mg);box-shadow:0 0 12px rgba(255,43,214,.3)}
+.dcard.pause{border-style:dashed;background:transparent}
 .hint{margin-top:10px;padding:12px 14px;border-radius:14px;border:1px dashed rgba(255,255,255,.16);font-size:13px;line-height:1.45;color:var(--mut)}
 </style>
 </head>
@@ -303,7 +306,7 @@ function subscribe(){
   S.loaded = false; S.data = null; render();
   S.unsub = onSnapshot(doc(db,'seasons',S.seasonId), snap => {
     S.data = snap.exists() ? snap.data() : null;
-    if (S.data) { S.data.players = S.data.players || []; S.data.days = S.data.days || {}; S.data.alt = S.data.alt || {}; S.data.trainBase = +S.data.trainBase || 0; S.data.dienste = S.data.dienste || []; }
+    if (S.data) { S.data.players = S.data.players || []; S.data.days = S.data.days || {}; S.data.alt = S.data.alt || {}; S.data.trainBase = +S.data.trainBase || 0; }
     S.loaded = true; render(); refreshOpenSheet();
   }, err => { S.loaded = true; S.error = err.message; render(); });
 }
@@ -350,44 +353,64 @@ function ranked(C, d){
   return d.players.filter(p=>!p.hidden).map(p=>C.res[p.id]).sort((a,b)=> b.ratio-a.ratio || b.w-a.w || a.l-b.l || a.p.name.localeCompare(b.p.name,'de'));
 }
 
-/* ---------- Materialdienst ---------- */
-const sortedDienste = d => (d.dienste||[]).slice().sort((a,b)=>a.from.localeCompare(b.from)||a.to.localeCompare(b.to));
-const dStatus = (e,t) => e.to < t ? 'past' : e.from > t ? 'next' : 'now';
-function dutyMap(d){ /* spielerId -> Eintrag, der heute läuft */
-  const t = todayISO(), m = {};
-  for (const e of sortedDienste(d)) if (dStatus(e,t)==='now') for (const id of e.names||[]) m[id] = e;
+/* ---------- Materialdienst: zwei feste Teams, Wochenwechsel ---------- */
+const MON = iso => { const dt = parseISO(iso); dt.setDate(dt.getDate() - ((dt.getDay()+6)%7)); return isoOf(dt); };
+const isoWeekNo = iso => { const dt = parseISO(iso); const d = new Date(Date.UTC(dt.getFullYear(),dt.getMonth(),dt.getDate())); const day = d.getUTCDay()||7; d.setUTCDate(d.getUTCDate()+4-day); const y0 = new Date(Date.UTC(d.getUTCFullYear(),0,1)); return Math.ceil(((d-y0)/86400000+1)/7); };
+const getM = d => { const m = d.material||{}, t = m.teams||[]; return {teams:[0,1].map(i=>({name:(t[i]&&t[i].name)||('Team '+'AB'[i]), ids:(t[i]&&t[i].ids)||[]})), start:m.start||null, pauses:m.pauses||[], swaps:m.swaps||{}}; };
+const pauseOf = (M,mon) => { const sun = addDays(mon,6); return M.pauses.find(p=>p.from<=sun && p.to>=mon) || null; };
+/* Wer ist in der Woche ab Montag `mon` dran? Pausenwochen zählen im Wechsel nicht mit. */
+function teamOfWeek(M, mon){
+  if (!M.start) return {kind:'none'};
+  if (mon < M.start.monday) return {kind:'before'};
+  const pz = pauseOf(M,mon); if (pz) return {kind:'pause', pause:pz};
+  let idx = M.start.team||0;
+  for (let w = M.start.monday; w < mon; w = addDays(w,7)) if (!pauseOf(M,w)) idx = 1-idx;
+  const sw = M.swaps[mon];
+  if (sw===0 || sw===1) return {kind:'team', idx:sw, swapped:true};
+  return {kind:'team', idx};
+}
+function dutyMap(d){ /* spielerId -> {to,team}: wer diese Woche Dienst hat */
+  const M = getM(d), mon = MON(todayISO()), r = teamOfWeek(M,mon), m = {};
+  if (r.kind==='team') for (const id of M.teams[r.idx].ids) m[id] = {to:addDays(mon,6), team:M.teams[r.idx].name};
   return m;
 }
-function periodTitle(e){
-  const [y1,m1,d1] = e.from.split('-').map(Number), [y2,m2] = e.to.split('-').map(Number);
-  if (d1===1 && e.to===endOfMonth(e.from)) return MONTHS[m1-1]+' '+y1;
-  const a = shortD(e.from), b = shortD(e.to);
-  return y1===y2 ? a+' – '+b+y2 : a+y1+' – '+b+y2;
-}
-function periodSub(e,t){
-  const full = shortD(e.from)+' – '+shortD(e.to)+e.to.slice(0,4);
-  const st = dStatus(e,t);
-  if (st==='now'){ const n = daysBetween(t,e.to); return full+' · '+(n===0?'letzter Tag':'noch '+n+(n===1?' Tag':' Tage')); }
-  if (st==='next'){ const n = daysBetween(t,e.from); return full+' · in '+n+(n===1?' Tag':' Tagen'); }
-  return full;
-}
-function dienstCard(d,e,t){
-  const st = dStatus(e,t);
+function weekCard(d,M,mon,r,rel){
+  const t = todayISO(), sun = addDays(mon,6), kw = isoWeekNo(mon);
   const byId = Object.fromEntries(d.players.map(p=>[p.id,p]));
-  const nm = (e.names||[]).map(id=>byId[id]).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name,'de'));
-  return `<div class="dcard ${st}">
-    <div class="dtop"><div>${st==='now'?`<div class="dbadge">${BOX('#22e6ff',13)} JETZT DRAN</div>`:''}${e.label?`<div class="eyebrow" style="color:var(--mut)">${esc(e.label.toUpperCase())}</div>`:''}<div class="dper">${esc(periodTitle(e))}</div><div class="dsub">${esc(periodSub(e,t))}</div></div>
-    ${isTrainer()?`<button class="editb" data-act="editdienst" data-id="${esc(e.id)}" aria-label="Dienst bearbeiten">${PENCIL}</button>`:''}</div>
-    <div class="names">${nm.length? nm.map(p=>`<span class="pn">${esc(p.name)}</span>`).join('') : '<span class="muted">Keine Namen eingetragen</span>'}</div></div>`;
+  const team = M.teams[r.idx];
+  const nm = team.ids.map(id=>byId[id]).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name,'de'));
+  let sub = shortD(mon)+' – '+shortD(sun)+sun.slice(0,4);
+  if (rel==='now'){ const n = daysBetween(t,sun); sub += ' · '+(n===0?'letzter Tag':'noch '+(n+1)+' Tage'); }
+  else if (rel==='next'){ const n = daysBetween(t,mon); sub += ' · in '+n+(n===1?' Tag':' Tagen'); }
+  return `<div class="dcard ${rel}">
+    <div class="dtop"><div>${rel==='now'?`<div class="dbadge">${BOX('#22e6ff',13)} DIESE WOCHE DRAN</div>`:''}<div class="eyebrow" style="color:var(--mut)">KW ${kw}${r.swapped?' · GETAUSCHT':''}</div><div class="dper">${esc(team.name)}</div><div class="dsub">${esc(sub)}</div></div>
+    ${isTrainer()?`<button class="editb" data-act="editweek" data-mon="${mon}" aria-label="Woche bearbeiten">${PENCIL}</button>`:''}</div>
+    <div class="names">${nm.length? nm.map(p=>`<span class="pn">${esc(p.name)}</span>`).join('') : '<span class="muted">Keine Namen im Team</span>'}</div></div>`;
+}
+function pauseCard(pz,rel){
+  const n = Math.round((daysBetween(MON(pz.from),MON(pz.to)))/7)+1;
+  return `<div class="dcard pause ${rel||''}"><div class="dtop"><div><div class="eyebrow" style="color:var(--mut)">PAUSE</div><div class="dper">${esc(pz.label||'Pause')}</div><div class="dsub">${shortD(pz.from)} – ${shortD(pz.to)}${pz.to.slice(0,4)} · ${n} ${n===1?'Woche':'Wochen'}, kein Wechsel</div></div>
+    ${isTrainer()?`<button class="editb" data-act="mpauses" aria-label="Pausen bearbeiten">${PENCIL}</button>`:''}</div></div>`;
 }
 function materialHtml(d){
-  const t = todayISO(), L = sortedDienste(d);
-  const now = L.filter(e=>dStatus(e,t)==='now'), nxt = L.filter(e=>dStatus(e,t)==='next'), past = L.filter(e=>dStatus(e,t)==='past').reverse();
-  if (!L.length) return `<div class="empty">Noch kein Materialdienst eingeteilt.${isTrainer()?'<br>Unten auf „Dienst eintragen“ tippen.':''}</div>`;
-  let h = `<div class="sec" style="margin-top:4px">JETZT DRAN</div>`;
-  h += now.length ? now.map(e=>dienstCard(d,e,t)).join('') : `<div class="hint">Gerade ist kein Materialdienst eingeteilt.</div>`;
-  if (nxt.length) h += `<div class="sec">ALS NÄCHSTES</div>` + nxt.map(e=>dienstCard(d,e,t)).join('');
-  if (past.length) h += `<div class="sec">VORBEI</div>` + past.map(e=>dienstCard(d,e,t)).join('');
+  const M = getM(d), t = todayISO(), mon0 = MON(t);
+  if (!M.start || !(M.teams[0].ids.length || M.teams[1].ids.length))
+    return `<div class="empty">Der Materialdienst-Plan ist noch nicht eingerichtet.${isTrainer()?'<br>Unten auf „Plan bearbeiten“ tippen: Teams festlegen und Startwoche wählen.':''}</div>`;
+  const r0 = teamOfWeek(M,mon0);
+  let h = `<div class="sec" style="margin-top:4px">DIESE WOCHE</div>`;
+  if (r0.kind==='team') h += weekCard(d,M,mon0,r0,'now');
+  else if (r0.kind==='pause') h += `<div class="hint">Diese Woche ist <b>Pause</b>${r0.pause.label?' ('+esc(r0.pause.label)+')':''}, kein Materialdienst. Weiter geht es ab ${fmtD(addDays(MON(r0.pause.to),7)).long.replace(/^\w+, /,'')}.</div>`;
+  else h += `<div class="hint">Der Plan startet am ${fmtD(M.start.monday).long}.</div>`;
+  const items = []; const seen = new Set(r0.kind==='pause' ? [r0.pause.id] : []);
+  for (let i=1; i<=26 && items.length<8; i++){
+    const mon = addDays(mon0,7*i), r = teamOfWeek(M,mon);
+    if (r.kind==='team') items.push({mon,r});
+    else if (r.kind==='pause' && !seen.has(r.pause.id)){ seen.add(r.pause.id); items.push({pz:r.pause}); }
+  }
+  if (items.length) h += `<div class="sec">ALS NÄCHSTES</div>` + items.map(x=>x.pz ? pauseCard(x.pz) : weekCard(d,M,x.mon,x.r,'next')).join('');
+  const past = [];
+  for (let i=1; i<=3; i++){ const mon = addDays(mon0,-7*i), r = teamOfWeek(M,mon); if (r.kind==='team') past.push({mon,r}); }
+  if (past.length) h += `<div class="sec">VORBEI</div>` + past.map(x=>weekCard(d,M,x.mon,x.r,'past')).join('');
   return h;
 }
 
@@ -471,7 +494,7 @@ function render(){
   else { h += tableHtml(d); }
   h += `</div>`;
   // bottom bar
-  if (isTrainer()) h += `<div class="bar"><button class="btn" data-act="menu" aria-label="Mehr">⋯</button>${mat?`<button class="btn pri" data-act="newdienst">Dienst eintragen</button>`:`<button class="btn pri" data-act="newday">Training eintragen</button>`}</div>`;
+  if (isTrainer()) h += `<div class="bar"><button class="btn" data-act="menu" aria-label="Mehr">⋯</button>${mat?`<button class="btn pri" data-act="mplan">Plan bearbeiten</button>`:`<button class="btn pri" data-act="newday">Training eintragen</button>`}</div>`;
   else h += `<div class="bar" style="justify-content:flex-end;pointer-events:none"><button class="chipbtn" style="pointer-events:auto;height:40px;font-size:13px;color:var(--mut)" data-act="login">Trainer-Login</button></div>`;
   app.innerHTML = h;
 }
@@ -655,7 +678,7 @@ function newSeasonSheet(){
   const nid = nextSeasonId(S.seasons[0]||S.seasonId);
   openSheet('newseason', `${shHead('TRAINER','Nächsten Part anlegen')}<div class="sh-b">
     <div class="kbox y" style="margin-top:6px"><b>Neu: ${esc(seasonLabel(nid))}</b></div>
-    <div class="txt" style="margin-top:12px">Das ist der Neustart: eine neue, leere Tabelle. Siege, Niederlagen, Streaks und der Trainings-Zähler beginnen bei 0, das nächste Training ist das erste. Die Spielerliste wird übernommen, ebenso Materialdienste, die noch nicht vorbei sind.</div>
+    <div class="txt" style="margin-top:12px">Das ist der Neustart: eine neue, leere Tabelle. Siege, Niederlagen, Streaks und der Trainings-Zähler beginnen bei 0, das nächste Training ist das erste. Die Spielerliste wird übernommen, ebenso der Materialdienst-Plan (Teams, Wochenrhythmus, Pausen).</div>
     <div class="txt" style="margin-top:10px">Alle bisherigen Tabellen bleiben unverändert gespeichert. Sie lassen sich oben rechts im Auswahlmenü jederzeit ansehen. Falls du die neue Tabelle aus Versehen anlegst, kannst du sie im Menü wieder löschen.</div>
     <div class="err" id="nserr"></div></div>
     <div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn pri" data-act="donewseason" data-id="${nid}">${esc(seasonLabel(nid))} anlegen</button></div>`);
@@ -663,12 +686,12 @@ function newSeasonSheet(){
 async function doNewSeason(v){
   const err = document.getElementById('nserr');
   if (S.seasons.includes(v)){ err.textContent='Diese Tabelle gibt es schon.'; return; }
-  const keep = (S.data && S.data.dienste ? S.data.dienste : []).filter(e=>e.to>=todayISO());
+  const mat = S.data && S.data.material ? {material: S.data.material} : {};
   try {
     /* Liegt dieselbe Tabelle im Papierkorb, bleibt sie als Kopie erhalten */
     const old = S.trash.find(t=>t.id===v);
     if (old) await setDoc(doc(db,'seasons',v+'~'+Date.now().toString(36)), old.data);
-    await setDoc(doc(db,'seasons',v), {players: S.data? S.data.players : DEFAULT_PLAYERS, days:{}, alt:{}, dienste: keep}); S.seasonId=v; S.picked=false; closeSheet(); await loadSeasons(); subscribe(); toast(seasonLabel(v)+' angelegt'); } catch(e){ err.textContent='Anlegen fehlgeschlagen.'; }
+    await setDoc(doc(db,'seasons',v), {players: S.data? S.data.players : DEFAULT_PLAYERS, days:{}, alt:{}, ...mat}); S.seasonId=v; S.picked=false; closeSheet(); await loadSeasons(); subscribe(); toast(seasonLabel(v)+' angelegt'); } catch(e){ err.textContent='Anlegen fehlgeschlagen.'; }
 }
 function delSeasonSheet(){
   openSheet('delseason', `${shHead('TRAINER','Tabelle löschen')}<div class="sh-b">
@@ -716,54 +739,101 @@ function exportData(){
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stenum-tabelle-'+S.seasonId+'-'+todayISO()+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
 }
 
-/* ---------- Materialdienst eintragen ---------- */
-function dienstSheet(id){
-  const d = S.data; if (!d) return;
-  const L = sortedDienste(d);
-  const ex = id ? L.find(e=>e.id===id) : null;
-  let st;
-  if (ex) st = {id:ex.id, label:ex.label||'', from:ex.from, to:ex.to, names:Object.fromEntries((ex.names||[]).map(n=>[n,1])), existed:true};
-  else {
-    const last = L.length ? L[L.length-1] : null, t = todayISO();
-    const from = last && last.to >= t ? addDays(last.to,1) : t;
-    st = {id:null, label:'', from, to:endOfMonth(from), names:{}, existed:false};
-    /* Zwei Gruppen im Wechsel: Vorschlag = Gruppe vom vorletzten Eintrag */
-    if (L.length>=2){ const pr = L[L.length-2]; st.label = pr.label||''; st.names = Object.fromEntries((pr.names||[]).map(n=>[n,1])); }
-  }
-  openSheet('dienst','',st); renderDienst();
+/* ---------- Materialdienst: Trainer-Masken ---------- */
+async function saveMaterial(M, msg){
+  const out = {teams:M.teams.map(t=>({name:t.name, ids:t.ids})), start:M.start||null, pauses:M.pauses, swaps:M.swaps};
+  try { await updateDoc(ref(), {material: out}); if (msg) toast(msg); return true; }
+  catch(e){ toast('Speichern fehlgeschlagen: bitte neu anmelden und nochmal versuchen'); console.error(e); return false; }
 }
-function renderDienst(){
+function mplanSheet(){
+  const M = getM(S.data);
+  const nP = M.pauses.length;
+  openSheet('mplan', `${shHead('MATERIALDIENST','Plan bearbeiten')}<div class="sh-b menu"><div class="txt">Zwei feste Teams wechseln jede Woche (Montag bis Sonntag). Pausenwochen zählen im Wechsel nicht mit.</div><div class="list">
+    <button class="li" data-act="mteams">Teams bearbeiten<span class="muted">${M.teams[0].ids.length} + ${M.teams[1].ids.length} ›</span></button>
+    <button class="li" data-act="mstart">Startwoche festlegen<span class="muted">${M.start?'KW '+isoWeekNo(M.start.monday)+' ›':'›'}</span></button>
+    <button class="li" data-act="mpauses">Pausen<span class="muted">${nP||'keine'} ›</span></button></div></div><div class="sh-f"></div>`);
+}
+/* Teams */
+function teamsSheet(){
+  const M = getM(S.data), assign = {};
+  M.teams.forEach((t,i)=>t.ids.forEach(id=>assign[id]=i));
+  openSheet('teams','',{names:[M.teams[0].name,M.teams[1].name], assign}); renderTeams();
+}
+function renderTeams(){
   const st = sheetState, d = S.data;
   const vis = d.players.filter(p=>!p.hidden), hid = d.players.filter(p=>p.hidden);
-  const btn = p => `<button class="psel ${st.names[p.id]?'on':''}" data-act="dtog" data-id="${p.id}" aria-pressed="${!!st.names[p.id]}">${esc(p.name)}</button>`;
-  const n = Object.keys(st.names).length;
+  const cnt = i => Object.values(st.assign).filter(v=>v===i).length;
+  const row = p => { const v = st.assign[p.id]; const l = v===0?'A':v===1?'B':'+'; return `<div class="li"><div class="n">${esc(p.name)}</div><button class="tap ${v===0?'tA':v===1?'tB':''}" data-act="mtap" data-id="${p.id}" aria-label="${esc(p.name)}: ${v===0?'Team A':v===1?'Team B':'kein Team'}" style="width:64px">${l}</button></div>`; };
   const sh = layer.querySelector('.sheet'); const top = sh.querySelector('.sh-b')?.scrollTop||0;
-  sh.innerHTML = `${shHead(st.existed?'DIENST BEARBEITEN':'MATERIALDIENST','Dienst eintragen')}<div class="sh-b">
-    <div class="field"><label for="dl">Bezeichnung (optional)</label><input class="inp" id="dl" value="${esc(st.label)}" placeholder="z. B. Gruppe A" autocomplete="off"></div>
-    <div class="grid2" style="margin-top:0"><div class="field" style="margin:0"><label for="df">Von</label><input class="inp" id="df" type="date" value="${st.from}"></div><div class="field" style="margin:0"><label for="dt">Bis</label><input class="inp" id="dt" type="date" value="${st.to}"></div></div>
-    <div class="chips"><span class="chip c" id="dcnt">${n} ausgewählt</span></div>
-    <div class="txt">Namen antippen, die in diesem Zeitraum dran sind. Wer heute im Zeitraum liegt, wird auf der Seite hervorgehoben.${!st.existed && Object.keys(st.names).length ? ' Vorschlag: dieselbe Gruppe wie im Dienst davor, passt du bei Bedarf an.' : ''}</div>
-    <div class="pgrid">${vis.map(btn).join('')}</div>
-    ${hid.length?`<div class="sec">TRAINER</div><div class="pgrid">${hid.map(btn).join('')}</div>`:''}
-    <div class="err" id="derr"></div>
-  </div><div class="sh-f"><button class="btn" data-act="close">Abbrechen</button>${st.existed?`<button class="btn danger" data-act="deldienst">Löschen</button>`:''}<button class="btn pri" data-act="savedienst">Speichern</button></div>`;
+  sh.innerHTML = `${shHead('MATERIALDIENST','Teams bearbeiten')}<div class="sh-b">
+    <div class="grid2" style="margin-top:6px"><div class="field" style="margin:0"><label for="tn0">Team A</label><input class="inp" id="tn0" value="${esc(st.names[0])}" autocomplete="off"></div><div class="field" style="margin:0"><label for="tn1">Team B</label><input class="inp" id="tn1" value="${esc(st.names[1])}" autocomplete="off"></div></div>
+    <div class="chips"><span class="chip c" id="tc0">A: ${cnt(0)}</span><span class="chip" id="tc1" style="color:var(--mg);border-color:rgba(255,43,214,.5)">B: ${cnt(1)}</span></div>
+    <div class="txt">Antippen: + → A → B → leer. Jeder Spieler ist nur in einem Team.</div>
+    <div class="list">${vis.map(row).join('')}</div>
+    ${hid.length?`<div class="sec">TRAINER</div><div class="list">${hid.map(row).join('')}</div>`:''}
+  </div><div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn pri" data-act="savemteams">Speichern</button></div>`;
   sh.querySelector('.sh-b').scrollTop = top;
 }
-async function saveDienst(){
-  const st = sheetState, err = document.getElementById('derr');
-  const names = Object.keys(st.names);
-  if (!st.from || !st.to){ err.textContent='Bitte Von und Bis ausfüllen.'; return; }
-  if (st.to < st.from){ err.textContent='„Bis“ liegt vor „Von“.'; return; }
-  if (!names.length){ err.textContent='Bitte mindestens einen Namen auswählen.'; return; }
-  const e = {id: st.id || 'd'+Date.now().toString(36), from:st.from, to:st.to, names, label:st.label.trim()};
-  const list = (S.data.dienste||[]).filter(x=>x.id!==e.id).concat([e]);
-  const btn = document.querySelector('[data-act=savedienst]'); btn.disabled = true; btn.textContent='Speichert …';
-  try { await updateDoc(ref(), {dienste:list}); closeSheet(); toast('Dienst gespeichert'); }
-  catch(x){ btn.disabled=false; btn.textContent='Speichern'; toast('Speichern fehlgeschlagen: bitte neu anmelden und nochmal versuchen'); console.error(x); }
+async function saveTeams(){
+  const st = sheetState, M = getM(S.data);
+  const ids = i => Object.keys(st.assign).filter(k=>st.assign[k]===i);
+  M.teams = [0,1].map(i=>({name:(st.names[i]||'').trim()||('Team '+'AB'[i]), ids:ids(i)}));
+  if (await saveMaterial(M,'Teams gespeichert')) closeSheet();
 }
-async function delDienst(){
-  if (!confirm('Diesen Dienst wirklich löschen?')) return;
-  try { await updateDoc(ref(), {dienste:(S.data.dienste||[]).filter(x=>x.id!==sheetState.id)}); closeSheet(); toast('Gelöscht'); } catch(e){ toast('Löschen fehlgeschlagen'); }
+/* Startwoche */
+function mstartSheet(){
+  const M = getM(S.data);
+  let date = M.start ? M.start.monday : addDays(MON(todayISO()),7);
+  openSheet('mstart','',{date, team:M.start?M.start.team:0}); renderMstart();
+}
+function renderMstart(){
+  const st = sheetState, M = getM(S.data);
+  const o = i => `<button class="opt ${st.team===i?'sel':''}" data-act="msetteam" data-i="${i}"><span><b>${esc(M.teams[i].name)}</b></span><span class="dot"></span></button>`;
+  const sh = layer.querySelector('.sheet');
+  sh.innerHTML = `${shHead('MATERIALDIENST','Startwoche festlegen')}<div class="sh-b"><div class="txt">Ab dieser Woche läuft der Plan. Das Datum kann ein beliebiger Tag der Woche sein, es zählt die Woche ab Montag.</div>
+    <div class="field"><label for="ms">Startwoche</label><input class="inp" id="ms" type="date" value="${st.date}"></div>
+    <div class="txt" id="mshint">Wochenstart: ${fmtD(MON(st.date)).long}</div>
+    <div class="sec">WER FÄNGT AN?</div><div class="list">${o(0)}${o(1)}</div></div>
+    <div class="sh-f"><button class="btn" data-act="close">Abbrechen</button><button class="btn pri" data-act="savemstart">Speichern</button></div>`;
+}
+async function saveMstart(){
+  const st = sheetState, M = getM(S.data);
+  if (!st.date){ toast('Bitte ein Datum wählen'); return; }
+  M.start = {monday: MON(st.date), team: st.team};
+  if (await saveMaterial(M,'Startwoche gespeichert')) closeSheet();
+}
+/* Pausen */
+function pausesSheet(){
+  const M = getM(S.data);
+  openSheet('pauses','',{list:M.pauses.slice(), label:'', from:addDays(MON(todayISO()),7), to:addDays(MON(todayISO()),13)}); renderPauses();
+}
+function renderPauses(){
+  const st = sheetState;
+  const L = st.list.slice().sort((a,b)=>a.from.localeCompare(b.from));
+  const sh = layer.querySelector('.sheet'); const top = sh.querySelector('.sh-b')?.scrollTop||0;
+  sh.innerHTML = `${shHead('MATERIALDIENST','Pausen')}<div class="sh-b"><div class="txt">In Pausenwochen hat niemand Dienst, und der Wechsel zählt dort nicht mit. Jede Woche, die den Zeitraum berührt, gilt als Pause.</div>
+    <div class="list">${L.length? L.map(p=>`<div class="li"><div><div class="n">${esc(p.label||'Pause')}</div><div class="r">${shortD(p.from)} – ${shortD(p.to)}${p.to.slice(0,4)}</div></div><button class="x" data-act="delpause" data-id="${esc(p.id)}" aria-label="Pause löschen">${XICO}</button></div>`).join('') : '<div class="li"><span class="muted">Keine Pausen eingetragen.</span></div>'}</div>
+    <div class="sec">NEUE PAUSE</div>
+    <div class="field"><label for="pl">Bezeichnung (optional)</label><input class="inp" id="pl" value="${esc(st.label)}" placeholder="z. B. Winterpause" autocomplete="off"></div>
+    <div class="grid2" style="margin-top:0"><div class="field" style="margin:0"><label for="pf">Von</label><input class="inp" id="pf" type="date" value="${st.from}"></div><div class="field" style="margin:0"><label for="pt">Bis</label><input class="inp" id="pt" type="date" value="${st.to}"></div></div>
+    <div class="err" id="perr"></div></div>
+    <div class="sh-f"><button class="btn" data-act="close">Schließen</button><button class="btn pri" data-act="addpause">Pause hinzufügen</button></div>`;
+  sh.querySelector('.sh-b').scrollTop = top;
+}
+async function pauseWrite(list, msg){
+  const M = getM(S.data); M.pauses = list;
+  return saveMaterial(M, msg);
+}
+/* Einzelne Woche */
+function weekSheet(mon){
+  const M = getM(S.data), r = teamOfWeek(M,mon), sun = addDays(mon,6);
+  const cur = r.kind==='team' ? M.teams[r.idx].name : '–';
+  const o = (act,i,t,sm) => `<button class="opt" data-act="${act}" ${i!==undefined?`data-i="${i}"`:''}><span><b>${t}</b>${sm?`<small>${sm}</small>`:''}</span></button>`;
+  openSheet('week', `${shHead('KW '+isoWeekNo(mon)+' · '+shortD(mon)+' – '+shortD(sun),'Woche ändern')}<div class="sh-b"><div class="txt">Laut Plan: <b>${esc(cur)}</b>. Änderungen gelten nur für diese Woche.</div><div class="list">
+    ${o('weekteam',0,esc(M.teams[0].name)+' übernimmt','Der Wechsel der anderen Wochen bleibt unverändert')}
+    ${o('weekteam',1,esc(M.teams[1].name)+' übernimmt','Der Wechsel der anderen Wochen bleibt unverändert')}
+    ${o('weekpause',undefined,'Diese Woche Pause','Alle Wochen danach rücken nach')}
+    ${o('weekreset',undefined,'Zurück zum Plan','')}</div></div><div class="sh-f"></div>`, {mon});
 }
 
 /* ---------- events ---------- */
@@ -780,11 +850,25 @@ document.addEventListener('click', async e => {
     case 'menu': menuSheet(); break;
     case 'newday': daySheet(todayISO()); break;
     case 'editday': daySheet(t.dataset.date); break;
-    case 'newdienst': dienstSheet(null); break;
-    case 'editdienst': dienstSheet(t.dataset.id); break;
-    case 'dtog': { const id=t.dataset.id; if (sheetState.names[id]) delete sheetState.names[id]; else sheetState.names[id]=1; t.classList.toggle('on', !!sheetState.names[id]); t.setAttribute('aria-pressed', !!sheetState.names[id]); document.getElementById('dcnt').textContent = Object.keys(sheetState.names).length+' ausgewählt'; break; }
-    case 'savedienst': saveDienst(); break;
-    case 'deldienst': delDienst(); break;
+    case 'mplan': mplanSheet(); break;
+    case 'mteams': teamsSheet(); break;
+    case 'mtap': { const id=t.dataset.id, cur=sheetState.assign[id]; if (cur===undefined) sheetState.assign[id]=0; else if (cur===0) sheetState.assign[id]=1; else delete sheetState.assign[id]; renderTeams(); break; }
+    case 'savemteams': saveTeams(); break;
+    case 'mstart': mstartSheet(); break;
+    case 'msetteam': sheetState.team = +t.dataset.i; renderMstart(); break;
+    case 'savemstart': saveMstart(); break;
+    case 'mpauses': pausesSheet(); break;
+    case 'delpause': { sheetState.list = sheetState.list.filter(p=>p.id!==t.dataset.id); await pauseWrite(sheetState.list,'Pause gelöscht'); renderPauses(); break; }
+    case 'addpause': { const st = sheetState, err = document.getElementById('perr');
+      if (!st.from || !st.to){ err.textContent='Bitte Von und Bis ausfüllen.'; break; }
+      if (st.to < st.from){ err.textContent='„Bis“ liegt vor „Von“.'; break; }
+      st.list = st.list.concat([{id:'p'+Date.now().toString(36), from:st.from, to:st.to, label:st.label.trim()}]); st.label='';
+      await pauseWrite(st.list,'Pause gespeichert'); renderPauses(); break; }
+    case 'newdienst': mplanSheet(); break;
+    case 'editweek': weekSheet(t.dataset.mon); break;
+    case 'weekteam': { const M = getM(S.data), mon = sheetState.mon; M.swaps = {...M.swaps, [mon]: +t.dataset.i}; if (await saveMaterial(M,'Gespeichert')) closeSheet(); break; }
+    case 'weekpause': { const M = getM(S.data), mon = sheetState.mon; M.pauses = M.pauses.concat([{id:'p'+Date.now().toString(36), from:mon, to:addDays(mon,6), label:''}]); if (await saveMaterial(M,'Woche als Pause eingetragen')) closeSheet(); break; }
+    case 'weekreset': { const M = getM(S.data), mon = sheetState.mon, sun = addDays(mon,6); const sw = {...M.swaps}; delete sw[mon]; M.swaps = sw; M.pauses = M.pauses.filter(p=>!(p.from===mon && p.to===sun)); if (await saveMaterial(M,'Zurück zum Plan')) closeSheet(); break; }
     case 'tap': { const id=t.dataset.id; const cur=sheetState.marks[id]||''; const nx = cur===''?'W':cur==='W'?'L':''; if (nx) sheetState.marks[id]=nx; else delete sheetState.marks[id]; renderDay(); break; }
     case 'saveday': saveDay(); break;
     case 'delday': delDay(); break;
@@ -805,7 +889,7 @@ document.addEventListener('click', async e => {
     case 'dodelseason': doDelSeason(); break;
     case 'export': exportData(); break;
     case 'profile': profileSheet(t.dataset.id); break;
-    case 'init': try { await setDoc(ref(), {players:DEFAULT_PLAYERS, days:{}, alt:{}, dienste:[]}); loadSeasons(); } catch(e){ toast('Anlegen fehlgeschlagen'); } break;
+    case 'init': try { await setDoc(ref(), {players:DEFAULT_PLAYERS, days:{}, alt:{}}); loadSeasons(); } catch(e){ toast('Anlegen fehlgeschlagen'); } break;
   }
 });
 document.addEventListener('input', e => {
@@ -816,17 +900,15 @@ document.addEventListener('input', e => {
     const tt = startTotals(); document.getElementById('tdone').textContent = tt.done+' von '+tt.total+' ausgefüllt'; document.getElementById('tsum').textContent = 'Summe '+tt.sw+' S · '+tt.sl+' N';
   }
   if (sheetKind==='start' && t.id==='tb') sheetState.base = t.value;
-  if (sheetKind==='dienst'){
-    if (t.id==='dl') sheetState.label = t.value;
-    if (t.id==='df') sheetState.from = t.value;
-    if (t.id==='dt') sheetState.to = t.value;
-  }
+  if (sheetKind==='teams'){ if (t.id==='tn0') sheetState.names[0] = t.value; if (t.id==='tn1') sheetState.names[1] = t.value; }
+  if (sheetKind==='mstart' && t.id==='ms'){ sheetState.date = t.value; const h = document.getElementById('mshint'); if (h && t.value) h.textContent = 'Wochenstart: '+fmtD(MON(t.value)).long; }
+  if (sheetKind==='pauses'){ if (t.id==='pl') sheetState.label = t.value; if (t.id==='pf') sheetState.from = t.value; if (t.id==='pt') sheetState.to = t.value; }
 });
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.act==='season'){ S.seasonId = t.value; S.picked = true; subscribe(); }
   if (t.id==='dd' && sheetKind==='day'){ const date=t.value; if(!date) return; const ex = S.data.days[date]; sheetState.date = date; sheetState.existed = !!ex; sheetState.marks = Object.assign({}, ex||{}); renderDay(); }
-  if (sheetKind==='dienst' && t.id==='df' && t.value && sheetState.to < t.value){ sheetState.to = endOfMonth(t.value); document.getElementById('dt').value = sheetState.to; }
+  if (sheetKind==='pauses' && t.id==='pf' && t.value && sheetState.to < t.value){ sheetState.to = addDays(t.value,6); document.getElementById('pt').value = sheetState.to; }
 });
 document.addEventListener('keydown', e => { if (e.key==='Enter' && sheetKind==='login') doLogin(); if (e.key==='Escape') closeSheet(); });
 
